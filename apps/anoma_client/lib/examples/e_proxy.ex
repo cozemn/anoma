@@ -6,16 +6,19 @@ defmodule Anoma.Client.Examples.EProxy do
 
   I then test each public API of the proxy to ensure it works as expected.
   """
-  use TypedStruct
 
   alias Anoma.Client.Connection.GRPCProxy
   alias Anoma.Client.Examples.EClient
-  alias Anoma.Protobuf.Intent
-  alias Anoma.Protobuf.Intents.Intent
+  alias Anoma.Proto.Intentpool.Intent
+  alias Anoma.Proto.Mempool
+  alias Examples.ETransparent.ETransaction
+  alias Noun.Nounable
 
   require ExUnit.Assertions
 
   import ExUnit.Assertions
+
+  use TypedStruct
 
   ############################################################
   #                    State                                 #
@@ -55,8 +58,14 @@ defmodule Anoma.Client.Examples.EProxy do
   """
   @spec add_intent(EClient.t()) :: EClient.t()
   def add_intent(client \\ setup()) do
+    # create an arbitrary intent and jam it
+    intent_jammed =
+      ETransaction.nullify_intent()
+      |> Nounable.to_noun()
+      |> Noun.Jam.jam()
+
     # intent to add
-    intent = %Intent{value: 1}
+    intent = %Intent{intent: intent_jammed}
 
     # call the proxy
     result = GRPCProxy.add_intent(intent)
@@ -68,50 +77,23 @@ defmodule Anoma.Client.Examples.EProxy do
   end
 
   @doc """
-  I ask the node to return its list of intents via the proxy.
+  I add a transaction to the client.
   """
-  @spec list_nullifiers(EClient.t()) :: {EClient.t(), [any()]}
-  def list_nullifiers(client \\ setup()) do
-    expected_nullifiers = ["null", "ifier"]
+  @spec add_transaction(EClient.t()) :: EClient.t()
+  def add_transaction(%EClient{} = client \\ setup()) do
+    # create an arbitrary intent and jam it
+    intent_jammed =
+      ETransaction.nullify_intent()
+      |> Nounable.to_noun()
+      |> Noun.Jam.jam()
 
     # call the proxy
-    {:ok, response} = GRPCProxy.list_nullifiers()
+    result = GRPCProxy.add_transaction(intent_jammed, :cairo_resource)
 
-    # assert the result is what was expected
-    assert expected_nullifiers == response.nullifiers
+    # assert the call succeeded
+    assert {:ok, %Mempool.Add.Response{result: "", __unknown_fields__: []}} ==
+             result
 
-    {client, response.nullifiers}
-  end
-
-  @doc """
-  I ask the node to return its list of intents via the proxy.
-  """
-  @spec list_unrevealed_commits(EClient.t()) :: {EClient.t(), [any()]}
-  def list_unrevealed_commits(client \\ setup()) do
-    expected_commits = ["commit1", "commit2"]
-
-    # call the proxy and assert the result is what was expected
-    {:ok, response} = GRPCProxy.list_unrevealed_commits()
-
-    # assert the result is what was expected
-    assert response.commits == expected_commits
-
-    {client, response.commits}
-  end
-
-  @doc """
-  I ask the node to return its list of intents via the proxy.
-  """
-  @spec list_unspent_resources(EClient.t()) :: {EClient.t(), [any()]}
-  def list_unspent_resources(client \\ setup()) do
-    expected_resources = ["unspent resource 1", "unspent resource 2"]
-
-    # call the proxy
-    {:ok, result} = GRPCProxy.list_unspent_resources()
-
-    # assert the result is what was expected
-    assert expected_resources == result.unspent_resources
-
-    {client, result.unspent_resources}
+    client
   end
 end

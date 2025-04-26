@@ -1,19 +1,19 @@
 defmodule Anoma.Client.Connection.GRPCProxy do
+  alias Anoma.Client.Examples.EClient.Mempool
+  alias Anoma.Proto.Executor.AddROTransaction
+  alias Anoma.Proto.ExecutorService
+  alias Anoma.Proto.Intentpool
+  alias Anoma.Proto.Intentpool.Intent
+  alias Anoma.Proto.IntentpoolService
+  alias Anoma.Proto.Mempool
+  alias Anoma.Proto.Mempool.Transaction
+  alias Anoma.Proto.MempoolService
+  alias Anoma.Proto.Node
+
+  require Logger
+
   use GenServer
   use TypedStruct
-
-  alias Anoma.Protobuf.Indexer.Nullifiers
-  alias Anoma.Protobuf.Indexer.UnrevealedCommits
-  alias Anoma.Protobuf.Indexer.UnspentResources
-  alias Anoma.Protobuf.IndexerService
-  alias Anoma.Protobuf.Intents.Add
-  alias Anoma.Protobuf.Intents.Intent
-  alias Anoma.Protobuf.Intents.List
-  alias Anoma.Protobuf.IntentsService
-  alias Anoma.Protobuf.NodeInfo
-  alias Anoma.Protobuf.Mempool.AddTransaction
-  alias Anoma.Protobuf.MempoolService
-  require Logger
 
   ############################################################
   #                    State                                 #
@@ -51,11 +51,11 @@ defmodule Anoma.Client.Connection.GRPCProxy do
   def init(args) do
     state = struct(__MODULE__, Enum.into(args, %{}))
 
-    case GRPC.Stub.connect("#{state.host}:#{state.port}") do
+    case connect(state.host, state.port) do
       {:ok, channel} ->
         {:ok, %{state | channel: channel}}
 
-      _err ->
+      {:error, :failed_to_connect} ->
         {:stop, :node_unreachable}
     end
   end
@@ -64,33 +64,28 @@ defmodule Anoma.Client.Connection.GRPCProxy do
   #                      Public RPC API                      #
   ############################################################
 
-  @spec list_intents() :: {:ok, List.Response.t()}
+  @spec list_intents() :: {:ok, Intentpool.List.Response.t()}
   def list_intents() do
     GenServer.call(__MODULE__, {:list_intents})
   end
 
-  @spec add_intent(Intent.t()) :: {:ok, Add.Response.t()}
+  @spec add_intent(Intent.t()) :: {:ok, Intentpool.Add.Response.t()}
   def add_intent(intent) do
     GenServer.call(__MODULE__, {:add_intent, intent})
   end
 
-  @spec list_nullifiers() :: {:ok, Nullifiers.Response.t()}
-  def list_nullifiers() do
-    GenServer.call(__MODULE__, {:list_nullifiers})
+  @spec add_transaction(binary(), atom()) :: {:ok, Mempool.Add.Response.t()}
+  def add_transaction(jammed_nock, transaction_type) do
+    GenServer.call(
+      __MODULE__,
+      {:add_transaction, jammed_nock, transaction_type}
+    )
   end
 
-  @spec list_unrevealed_commits() :: {:ok, UnrevealedCommits.Response.t()}
-  def list_unrevealed_commits() do
-    GenServer.call(__MODULE__, {:list_unrevealed_commits})
-  end
-
-  @spec list_unspent_resources() :: {:ok, UnspentResources.Response.t()}
-  def list_unspent_resources() do
-    GenServer.call(__MODULE__, {:list_unspent_resources})
-  end
-
-  def add_transaction(jammed_nock) do
-    GenServer.call(__MODULE__, {:add_transaction, jammed_nock})
+  @spec add_read_only_transaction(binary()) ::
+          {:ok, AddROTransaction.Response.t()}
+  def add_read_only_transaction(jammed_nock) do
+    GenServer.call(__MODULE__, {:add_ro_transaction, jammed_nock})
   end
 
   ############################################################
@@ -99,57 +94,43 @@ defmodule Anoma.Client.Connection.GRPCProxy do
 
   @impl true
   def handle_call({:list_intents}, _from, state) do
-    node_info = %NodeInfo{node_id: state.node_id}
-    request = %List.Request{node_info: node_info}
-    intents = IntentsService.Stub.list_intents(state.channel, request)
+    node_info = %Node{id: state.node_id}
+    request = %Intentpool.List.Request{node: node_info}
+    intents = IntentpoolService.Stub.list(state.channel, request)
     {:reply, intents, state}
   end
 
   def handle_call({:add_intent, intent}, _from, state) do
-    node_info = %NodeInfo{node_id: state.node_id}
-    request = %Add.Request{node_info: node_info, intent: intent}
-    result = IntentsService.Stub.add_intent(state.channel, request)
+    node_info = %Node{id: state.node_id}
+    request = %Intentpool.Add.Request{node: node_info, intent: intent}
+
+    result = IntentpoolService.Stub.add(state.channel, request)
     {:reply, result, state}
   end
 
-  def handle_call({:list_nullifiers}, _from, state) do
-    node_info = %NodeInfo{node_id: state.node_id}
+  def handle_call({:add_transaction, jammed_nock, type}, _from, state) do
+    node_info = %Node{id: state.node_id}
 
-    request = %Nullifiers.Request{node_info: node_info}
-    nullifiers = IndexerService.Stub.list_nullifiers(state.channel, request)
-    {:reply, nullifiers, state}
-  end
-
-  def handle_call({:list_unrevealed_commits}, _from, state) do
-    node_info = %NodeInfo{node_id: state.node_id}
-    request = %UnrevealedCommits.Request{node_info: node_info}
-
-    commits =
-      IndexerService.Stub.list_unrevealed_commits(state.channel, request)
-
-    {:reply, commits, state}
-  end
-
-  def handle_call({:list_unspent_resources}, _from, state) do
-    node_info = %NodeInfo{node_id: state.node_id}
-    request = %UnspentResources.Request{node_info: node_info}
-
-    resources =
-      IndexerService.Stub.list_unspent_resources(state.channel, request)
-
-    {:reply, resources, state}
-  end
-
-  def handle_call({:add_transaction, jammed_nock}, _from, state) do
-    node_info = %NodeInfo{node_id: state.node_id}
-
-    request = %AddTransaction.Request{
-      transaction: jammed_nock,
-      node_info: node_info
+    request = %Mempool.Add.Request{
+      transaction: %Transaction{transaction: jammed_nock},
+      node: node_info,
+      transaction_type: type
     }
 
-    MempoolService.Stub.add(state.channel, request)
-    {:reply, :ok, state}
+    result = MempoolService.Stub.add(state.channel, request)
+    {:reply, result, state}
+  end
+
+  def handle_call({:add_ro_transaction, jammed_nock}, _from, state) do
+    node_info = %Node{id: state.node_id}
+
+    request = %AddROTransaction.Request{
+      transaction: %Transaction{transaction: jammed_nock},
+      node: node_info
+    }
+
+    response = ExecutorService.Stub.add(state.channel, request)
+    {:reply, response, state}
   end
 
   @impl true
@@ -160,5 +141,34 @@ defmodule Anoma.Client.Connection.GRPCProxy do
   @impl true
   def handle_info(_message, state) do
     {:noreply, state}
+  end
+
+  ############################################################
+  #                       Helpers                            #
+  ############################################################
+
+  # @doc """
+  # I try to establish a connection to the remote node.
+  # If I dont succeed after 10 attempts, I stop trying.
+  # """
+  @spec connect(String.t(), String.t(), non_neg_integer()) ::
+          {:ok, any()} | {:error, :failed_to_connect}
+  defp connect(host, port, attempts \\ 5)
+
+  defp connect(host, port, 0) do
+    Logger.error("failed to connect to node at #{host}, port #{port}")
+    {:error, :failed_to_connect}
+  end
+
+  defp connect(host, port, attempts) do
+    Logger.debug("connecting to node at #{host}, port #{port}")
+
+    case GRPC.Stub.connect("#{host}:#{port}") do
+      {:ok, channel} ->
+        {:ok, channel}
+
+      _err ->
+        connect(host, port, attempts - 1)
+    end
   end
 end

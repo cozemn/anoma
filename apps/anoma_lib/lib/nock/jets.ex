@@ -3,9 +3,18 @@ defmodule Nock.Jets do
   Jets for the Nock interpreter, taking a gate core. Not fully general.
   """
 
-  import Noun
-  import Bitwise
   alias Anoma.Crypto.Sign
+  alias Anoma.RM.Transparent.Action
+  alias Anoma.RM.Transparent.ComplianceUnit
+  alias Anoma.RM.Transparent.Resource
+  alias Anoma.RM.Transparent.Transaction
+  alias Anoma.RM.Transparent.Primitive.DeltaHash
+  alias Anoma.RM.Transparent.ProvingSystem.DPS
+  alias Anoma.RM.Transparent.ProvingSystem.CPS
+  alias Anoma.CairoResource
+
+  import Bitwise
+  import Noun
 
   @spec calculate_mug_of_core(non_neg_integer(), non_neg_integer()) ::
           non_neg_integer()
@@ -36,8 +45,7 @@ defmodule Nock.Jets do
 
   """
   def calculate_mug_of_core(index_in_core, parent_layer) do
-    {:ok, core} = calculate_core(index_in_core, parent_layer)
-    Noun.mug(hd(core))
+    calculate_core(index_in_core, parent_layer) |> hd() |> Noun.mug()
   end
 
   @doc """
@@ -67,10 +75,18 @@ defmodule Nock.Jets do
   """
   @spec calculate_mug_of_layer(non_neg_integer()) :: non_neg_integer()
   def calculate_mug_of_layer(layer) do
-    context_axis = Integer.pow(2, Nock.stdlib_layers() - layer + 1) - 1
+    layer |> calculate_layer() |> Noun.mug()
+  end
 
-    with {:ok, context} <- Noun.axis(context_axis, Nock.stdlib_core()) do
-      mug(context)
+  @doc """
+  I get the layer based on its number.
+  """
+  @spec calculate_layer(non_neg_integer()) :: Noun.t()
+  def calculate_layer(layer) do
+    context_axis = layer_offset(layer)
+
+    with {:ok, context} <- Noun.axis(context_axis, Nock.Lib.rm_core()) do
+      context
     end
   end
 
@@ -91,10 +107,9 @@ defmodule Nock.Jets do
   For our standard library, so far only layer 4 is parameterized
   """
   def calculate_mug_of_param_core(index_in_core, core_index, parent_layer) do
-    with {:ok, val} <-
-           calculate_core_param(core_index, index_in_core, parent_layer) do
-      Noun.mug(hd(val))
-    end
+    calculate_core_param(index_in_core, core_index, parent_layer)
+    |> hd()
+    |> Noun.mug()
   end
 
   @spec calculate_mug_of_param_layer(non_neg_integer(), non_neg_integer()) ::
@@ -106,13 +121,19 @@ defmodule Nock.Jets do
 
       > Nock.Jets.calculate_mug_of_param_layer(10, 4)
       11284470320276584209
-
-  For our standard library, so far only layer 4 is parameterized
   """
   def calculate_mug_of_param_layer(core_index, parent_layer) do
-    with {:ok, core} <- calculate_core_param(core_index, 4, parent_layer),
+    core_index |> calculate_param_layer(parent_layer) |> Noun.mug()
+  end
+
+  @doc """
+  I find the door cores, i.e. parametrized layers.
+  """
+  @spec calculate_param_layer(non_neg_integer(), non_neg_integer) :: Noun.t()
+  def calculate_param_layer(core_index, parent_layer) do
+    with core <- calculate_core_param(core_index, 4, parent_layer),
          {:ok, parent} <- Noun.axis(14, core) do
-      Noun.mug(parent)
+      parent
     end
   end
 
@@ -121,38 +142,44 @@ defmodule Nock.Jets do
           non_neg_integer(),
           non_neg_integer()
         ) ::
-          :error | {:ok, Noun.t()}
-  def calculate_core_param(core_index, gate_index, parent_layer) do
-    Nock.nock(Nock.logics_core(), [
-      7,
-      [
-        9,
-        core_index,
-        0 | Noun.index_to_offset(Nock.stdlib_layers() - parent_layer + 3)
-      ],
-      9,
-      gate_index,
-      0 | 1
-    ])
+          Noun.t()
+  def calculate_core_param(gate_index, core_index, parent_layer) do
+    with {:ok, res} <-
+           nock4k(Nock.Lib.rm_core(), [
+             7,
+             [
+               9,
+               core_index,
+               0 | layer_offset(parent_layer)
+             ],
+             9,
+             gate_index,
+             0 | 1
+           ]) do
+      res
+    end
   end
 
   @spec calculate_core(non_neg_integer(), non_neg_integer()) ::
-          :error | {:ok, Noun.t()}
-  defp calculate_core(index_in_core, parent_layer) do
-    Nock.nock(Nock.logics_core(), [
-      8,
-      # We drive `layers - parent + 3`, from how layers get pushed.
-      # Each layer pushes the previous one down by one. the + 3 is for:
-      # 0. layer 0 (I believe, Ι may be incorrect on this)
-      # 1. the rm_core
-      # 2. the logics_core
-      [
-        9,
-        index_in_core,
-        0 | Noun.index_to_offset(Nock.stdlib_layers() - parent_layer + 3)
-      ],
-      0 | 2
-    ])
+          Noun.t()
+  def calculate_core(index_in_core, layer) do
+    with {:ok, res} <-
+           nock4k(Nock.Lib.rm_core(), [
+             8,
+             [
+               9,
+               index_in_core,
+               0 | layer_offset(layer)
+             ],
+             0 | 2
+           ]) do
+      res
+    end
+  end
+
+  @spec layer_offset(non_neg_integer) :: non_neg_integer
+  defp layer_offset(layers) do
+    Noun.index_to_offset(Nock.Lib.stdlib_layers() - layers + 1)
   end
 
   # when this is called, we've already jet-matched axis 7.
@@ -304,9 +331,9 @@ defmodule Nock.Jets do
       when is_noun_atom(a) and is_noun_atom(b) and is_noun_atom(c) ->
         try do
           if Sign.verify_detached(
-               Noun.atom_integer_to_binary(a),
+               Noun.atom_integer_to_binary(a, 64),
                Noun.atom_integer_to_binary(b),
-               Noun.atom_integer_to_binary(c)
+               Noun.atom_integer_to_binary(c, 32)
              ) do
             {:ok, 0}
           else
@@ -330,7 +357,7 @@ defmodule Nock.Jets do
         try do
           case Sign.verify(
                  Noun.atom_integer_to_binary(a),
-                 Noun.atom_integer_to_binary(b)
+                 Noun.atom_integer_to_binary(b, 32)
                ) do
             {:ok, val} -> {:ok, [0 | val]}
             {:error, _} -> {:ok, 0}
@@ -368,7 +395,7 @@ defmodule Nock.Jets do
           {:ok,
            sign_fn.(
              Noun.atom_integer_to_binary(a),
-             Noun.atom_integer_to_binary(b)
+             Noun.atom_integer_to_binary(b, 64)
            )}
         rescue
           _ in ArgumentError -> :error
@@ -382,6 +409,7 @@ defmodule Nock.Jets do
   @spec bex(Noun.t()) :: :error | {:ok, Noun.t()}
   def bex(core) do
     with {:ok, a} when is_noun_atom(a) <- sample(core) do
+      a = an_integer(a)
       {:ok, 2 ** a}
     else
       _ -> :error
@@ -392,6 +420,8 @@ defmodule Nock.Jets do
   def mix(core) do
     with {:ok, [a | b]} when is_noun_atom(a) and is_noun_atom(b) <-
            sample(core) do
+      a = an_integer(a)
+      b = an_integer(b)
       {:ok, bxor(a, b)}
     else
       _ -> :error
@@ -404,7 +434,8 @@ defmodule Nock.Jets do
            sample(core),
          {:ok, block_size} when is_noun_atom(block_size) <-
            Noun.axis(30, core) do
-      {:ok, val <<< (count <<< block_size)}
+      {:ok,
+       an_integer(val) <<< (an_integer(count) <<< an_integer(block_size))}
     else
       _ -> :error
     end
@@ -416,7 +447,8 @@ defmodule Nock.Jets do
            sample(core),
          {:ok, block_size} when is_noun_atom(block_size) <-
            Noun.axis(30, core) do
-      {:ok, val >>> (count <<< block_size)}
+      {:ok,
+       an_integer(val) >>> (an_integer(count) <<< an_integer(block_size))}
     else
       _ -> :error
     end
@@ -430,8 +462,8 @@ defmodule Nock.Jets do
            Noun.axis(30, core) do
       # we get #b1111, if count is 4. Since 1 <<< 4 = #b10000 - 1 = #b1111
       # block_size just a left shift on the count
-      mask = (1 <<< (count <<< block_size)) - 1
-      {:ok, val &&& mask}
+      mask = (1 <<< (an_integer(count) <<< an_integer(block_size))) - 1
+      {:ok, an_integer(val) &&& mask}
     else
       _ -> :error
     end
@@ -442,7 +474,7 @@ defmodule Nock.Jets do
     with {:ok, sample} when is_noun_atom(sample) <- sample(core),
          {:ok, block_size} when is_noun_atom(block_size) <-
            Noun.axis(30, core) do
-      {:ok, Nock.Bits.num_bits(sample, block_size)}
+      {:ok, Noun.Bits.num_bits(sample, block_size)}
     else
       _ -> :error
     end
@@ -454,7 +486,7 @@ defmodule Nock.Jets do
 
     case maybe_sample do
       {:ok, sample} ->
-        {:ok, Nock.Jam.jam(sample)}
+        {:ok, Noun.Jam.jam(sample)}
 
       _ ->
         :error
@@ -467,7 +499,7 @@ defmodule Nock.Jets do
 
     case maybe_sample do
       {:ok, sample} when is_noun_atom(sample) ->
-        Nock.Cue.cue(sample)
+        Noun.Jam.cue(sample)
 
       _ ->
         :error
@@ -478,7 +510,7 @@ defmodule Nock.Jets do
   def shax(core) do
     with {:ok, noun} when is_noun_atom(noun) <- sample(core),
          sample <- Noun.atom_integer_to_binary(noun) do
-      {:ok, :crypto.hash(:sha256, sample) |> Noun.atom_binary_to_integer()}
+      {:ok, :crypto.hash(:sha256, sample)}
     else
       _ -> :error
     end
@@ -596,7 +628,393 @@ defmodule Nock.Jets do
     end
   end
 
+  @spec nmug(Noun.t()) :: :error | {:ok, Noun.t()}
+  def nmug(core) do
+    with {:ok, a} <- sample(core) do
+      {:ok, Noun.mug(a)}
+    else
+      _ -> :error
+    end
+  end
+
   defp a_signed_integer(x), do: Noun.atom_binary_to_signed_integer(x)
+
+  @spec dor(Noun.t()) :: :error | {:ok, Noun.t()}
+  def dor(core) do
+    with {:ok, [a | b]} <- sample(core) do
+      res = Noun.Order.dor(a, b) |> Noun.bool_to_noun()
+      {:ok, res}
+    else
+      _ -> :error
+    end
+  end
+
+  @spec gor(Noun.t()) :: :error | {:ok, Noun.t()}
+  def gor(core) do
+    with {:ok, [a | b]} <- sample(core) do
+      res = Noun.Order.gor(a, b) |> Noun.bool_to_noun()
+
+      {:ok, res}
+    else
+      _ -> :error
+    end
+  end
+
+  @spec mor(Noun.t()) :: :error | {:ok, Noun.t()}
+  def mor(core) do
+    with {:ok, [a | b]} <- sample(core) do
+      res = Noun.Order.mor(a, b) |> Noun.bool_to_noun()
+
+      {:ok, res}
+    else
+      _ -> :error
+    end
+  end
+
+  @spec silt(Noun.t()) :: :error | {:ok, Noun.t()}
+  def silt(core) do
+    with {:ok, a} <- sample(core),
+         {:ok, list} <- Noun.Nounable.List.from_noun(a) do
+      {:ok, list |> MapSet.new() |> Noun.Nounable.to_noun()}
+    else
+      _ -> :error
+    end
+  end
+
+  @spec put(Noun.t()) :: :error | {:ok, Noun.t()}
+  def put(core) do
+    with {:ok, elem} <- sample(core),
+         {:ok, door_set} <- Noun.axis(30, core),
+         {:ok, set} <- Noun.Nounable.MapSet.from_noun(door_set) do
+      {:ok, set |> MapSet.put(elem) |> Noun.Nounable.to_noun()}
+    else
+      _ -> :error
+    end
+  end
+
+  @spec uni(Noun.t()) :: :error | {:ok, Noun.t()}
+  def uni(core) do
+    with {:ok, set_arg} <- sample(core),
+         {:ok, door_set} <- Noun.axis(30, core),
+         {:ok, set1} <- Noun.Nounable.MapSet.from_noun(set_arg),
+         {:ok, set2} <- Noun.Nounable.MapSet.from_noun(door_set) do
+      {:ok, set1 |> MapSet.union(set2) |> Noun.Nounable.to_noun()}
+    else
+      _ -> :error
+    end
+  end
+
+  @spec int(Noun.t()) :: :error | {:ok, Noun.t()}
+  def int(core) do
+    with {:ok, set_arg} <- sample(core),
+         {:ok, door_set} <- Noun.axis(30, core),
+         {:ok, set1} <- Noun.Nounable.MapSet.from_noun(set_arg),
+         {:ok, set2} <- Noun.Nounable.MapSet.from_noun(door_set) do
+      {:ok, set1 |> MapSet.intersection(set2) |> Noun.Nounable.to_noun()}
+    else
+      _ -> :error
+    end
+  end
+
+  @spec sdif(Noun.t()) :: :error | {:ok, Noun.t()}
+  def sdif(core) do
+    with {:ok, set_arg} <- sample(core),
+         {:ok, door_set} <- Noun.axis(30, core),
+         {:ok, set1} <- Noun.Nounable.MapSet.from_noun(set_arg),
+         {:ok, set2} <- Noun.Nounable.MapSet.from_noun(door_set) do
+      {:ok, set1 |> MapSet.difference(set2) |> Noun.Nounable.to_noun()}
+    else
+      _ -> :error
+    end
+  end
+
+  @spec duni(Noun.t()) :: :error | {:ok, Noun.t()}
+  def duni(core) do
+    with {:ok, set_arg} <- sample(core),
+         {:ok, door_set} <- Noun.axis(30, core),
+         {:ok, set1} <- Noun.Nounable.MapSet.from_noun(set_arg),
+         {:ok, set2} <- Noun.Nounable.MapSet.from_noun(door_set),
+         true <- MapSet.disjoint?(set1, set2) do
+      {:ok, set1 |> MapSet.union(set2) |> Noun.Nounable.to_noun()}
+    else
+      _ -> :error
+    end
+  end
+
+  @spec has(Noun.t()) :: :error | {:ok, Noun.t()}
+  def has(core) do
+    with {:ok, elem} <- sample(core),
+         {:ok, door_set} <- Noun.axis(30, core),
+         {:ok, set} <- Noun.Nounable.MapSet.from_noun(door_set) do
+      {:ok, set |> MapSet.member?(elem) |> Noun.bool_to_noun()}
+    else
+      _ -> :error
+    end
+  end
+
+  @spec mput(Noun.t()) :: :error | {:ok, Noun.t()}
+  def mput(core) do
+    with {:ok, [key | value]} <- sample(core),
+         {:ok, door_map} <- Noun.axis(30, core),
+         {:ok, map} <- Noun.Nounable.Map.from_noun(door_map) do
+      {:ok, map |> Map.put(key, value) |> Noun.Nounable.Map.to_noun()}
+    else
+      _ -> :error
+    end
+  end
+
+  @spec got(Noun.t()) :: :error | {:ok, Noun.t()}
+  def got(core) do
+    with {:ok, key} <- sample(core),
+         {:ok, door_map} <- Noun.axis(30, core),
+         {:ok, map} <- Noun.Nounable.Map.from_noun(door_map),
+         res <- Map.get(map, key) do
+      {:ok, Noun.Nounable.Map.to_noun(res)}
+    else
+      _ -> :error
+    end
+  end
+
+  @spec kind(Noun.t()) :: :error | {:ok, Noun.t()}
+  def kind(core) do
+    with {:ok, a} when is_noun_cell(a) <- sample(core),
+         {:ok, resource} <- Resource.from_noun(a) do
+      res = Resource.kind(resource)
+      {:ok, res}
+    else
+      _ ->
+        :error
+    end
+  end
+
+  @spec delta_add(Noun.t()) :: :error | {:ok, Noun.t()}
+  def delta_add(core) do
+    with {:ok, [a | b]} <- sample(core),
+         {:ok, cue_a} <- Noun.atom_integer_to_binary(a) |> Noun.Jam.cue(),
+         {:ok, cue_b} <- Noun.atom_integer_to_binary(b) |> Noun.Jam.cue(),
+         {:ok, _map} <- Noun.Nounable.Map.from_noun(cue_a),
+         {:ok, _map} <- Noun.Nounable.Map.from_noun(cue_b) do
+      res =
+        DeltaHash.delta_add(
+          Noun.atom_binary_to_integer(a),
+          Noun.atom_binary_to_integer(b)
+        )
+
+      {:ok, res}
+    else
+      _ ->
+        :error
+    end
+  end
+
+  @spec delta_sub(Noun.t()) :: :error | {:ok, Noun.t()}
+  def delta_sub(core) do
+    with {:ok, [a | b]} <- sample(core),
+         {:ok, cue_a} <- Noun.atom_integer_to_binary(a) |> Noun.Jam.cue(),
+         {:ok, cue_b} <- Noun.atom_integer_to_binary(b) |> Noun.Jam.cue(),
+         {:ok, _map} <- Noun.Nounable.Map.from_noun(cue_a),
+         {:ok, _map} <- Noun.Nounable.Map.from_noun(cue_b) do
+      res =
+        DeltaHash.delta_sub(
+          Noun.atom_binary_to_integer(a),
+          Noun.atom_binary_to_integer(b)
+        )
+
+      {:ok, res}
+    else
+      _ -> :error
+    end
+  end
+
+  @spec resource_delta(Noun.t()) :: :error | {:ok, Noun.t()}
+  def resource_delta(core) do
+    with {:ok, a} <- sample(core),
+         {:ok, action} <- Resource.from_noun(a) do
+      res = action |> Resource.delta()
+      {:ok, res}
+    else
+      _ -> :error
+    end
+  end
+
+  @spec compliance_delta(Noun.t()) :: :error | {:ok, Noun.t()}
+  def compliance_delta(core) do
+    with {:ok, a} <- sample(core),
+         {:ok, action} <- ComplianceUnit.from_noun(a) do
+      res = action |> ComplianceUnit.delta()
+      {:ok, res}
+    else
+      _ -> :error
+    end
+  end
+
+  @spec action_delta(Noun.t()) :: :error | {:ok, Noun.t()}
+  def action_delta(core) do
+    with {:ok, a} <- sample(core),
+         {:ok, action} <- Action.from_noun(a) do
+      res = action |> Action.delta()
+      {:ok, res}
+    else
+      _ -> :error
+    end
+  end
+
+  @spec make_delta(Noun.t()) :: :error | {:ok, Noun.t()}
+  def make_delta(core) do
+    with {:ok, a} <- sample(core),
+         {:ok, set} <- Noun.Nounable.MapSet.from_noun(a),
+         action_list <- set |> Enum.map(&Action.from_noun/1),
+         false <- action_list |> Enum.any?(&(&1 == :error)) do
+      res =
+        action_list
+        |> Enum.map(&Action.delta(elem(&1, 1)))
+        |> Enum.reduce(2, &DeltaHash.delta_add/2)
+
+      {:ok, res}
+    else
+      _ -> :error
+    end
+  end
+
+  @spec action_create(Noun.t()) :: :error | {:ok, Noun.t()}
+  def action_create(core) do
+    with {:ok, [con, cre | data]} <- sample(core),
+         {:ok, con} <- Noun.Nounable.List.from_noun(con),
+         {:ok, cre} <- Noun.Nounable.List.from_noun(cre),
+         {:ok, data} <- Noun.Nounable.Map.from_noun(data),
+         con_res <-
+           con
+           |> Enum.map(fn [key, res | root] ->
+             {:ok, res} = Resource.from_noun(res)
+
+             {Noun.atom_integer_to_binary(key, 32), res,
+              Noun.atom_binary_to_integer(root)}
+           end),
+         cre_res <-
+           cre
+           |> Enum.map(fn res ->
+             {:ok, res} = Resource.from_noun(res)
+             res
+           end),
+         data_res <-
+           data
+           |> Enum.into(%{}, fn {key, list_noun} ->
+             with {:ok, list} <- Noun.Nounable.List.from_noun(list_noun) do
+               {Noun.atom_binary_to_integer(key),
+                Enum.map(list, fn [bin | bool] ->
+                  {Noun.atom_integer_to_binary(bin), Noun.equal?(bool, 0)}
+                end)}
+             end
+           end) do
+      {:ok,
+       Action.create(con_res, cre_res, data_res) |> Noun.Nounable.to_noun()}
+    else
+      _ -> :error
+    end
+  end
+
+  @spec trm_compliance_key(Noun.t()) :: :error | {:ok, Noun.t()}
+  def trm_compliance_key(core) do
+    with {:ok, sample} <- sample(core),
+         {:ok, instance} <- CPS.Instance.from_noun(sample) do
+      {:ok,
+       CPS.verify_jet(
+         instance.consumed,
+         instance.created,
+         instance.unit_delta
+       )
+       |> Noun.Nounable.to_noun()}
+    else
+      _ -> :error
+    end
+  end
+
+  @spec trm_delta_key(Noun.t()) :: :error | {:ok, Noun.t()}
+  def trm_delta_key(core) do
+    with {:ok, sample} <- sample(core),
+         {:ok, instance} <- DPS.Instance.from_noun(sample) do
+      {:ok,
+       DPS.verify_jet(instance.delta, instance.expected_balance)
+       |> Noun.Nounable.to_noun()}
+    else
+      _ -> :error
+    end
+  end
+
+  @spec t_compose(Noun.t()) :: :error | {:ok, Noun.t()}
+  def t_compose(core) do
+    with {:ok, [tx1 | tx2]} <- sample(core),
+         {:ok, cairo_tx1} <- Transaction.from_noun(tx1),
+         {:ok, cairo_tx2} <- Transaction.from_noun(tx2) do
+      {:ok,
+       Transaction.compose(cairo_tx1, cairo_tx2)
+       |> Noun.Nounable.to_noun()}
+    else
+      _ -> :error
+    end
+  end
+
+  @spec cairo_compose(Noun.t()) :: :error | {:ok, Noun.t()}
+  def cairo_compose(core) do
+    with {:ok, [tx1 | tx2]} <- sample(core),
+         {:ok, cairo_tx1} <- CairoResource.Transaction.from_noun(tx1),
+         {:ok, cairo_tx2} <- CairoResource.Transaction.from_noun(tx2) do
+      {:ok,
+       CairoResource.Transaction.compose(cairo_tx1, cairo_tx2)
+       |> Noun.Nounable.to_noun()}
+    else
+      _ -> :error
+    end
+  end
+
+  @spec cairo_create_from_cus(Noun.t()) :: :error | {:ok, Noun.t()}
+  def cairo_create_from_cus(core) do
+    with {:ok, [json1, bin1, json2, bin2 | json3]} <- sample(core),
+         {:ok, json1_list} <- Noun.Nounable.List.from_noun(json1),
+         {:ok, bin1_list} <- Noun.Nounable.List.from_noun(bin1),
+         {:ok, json2_list} <- Noun.Nounable.List.from_noun(json2),
+         {:ok, bin2_list} <- Noun.Nounable.List.from_noun(bin2),
+         {:ok, json3_list} <- Noun.Nounable.List.from_noun(json3),
+         jason1_res <-
+           Enum.map(json1_list, fn x ->
+             {:ok, res} = Noun.Nounable.Jason.OrderedObject.from_noun(x)
+             res
+           end),
+         bin1_res <- Enum.map(bin1_list, &Noun.atom_integer_to_binary/1),
+         jason2_res <-
+           Enum.map(json2_list, fn x ->
+             {:ok, res} = Noun.Nounable.Jason.OrderedObject.from_noun(x)
+             res
+           end),
+         bin2_res <- Enum.map(bin2_list, &Noun.atom_integer_to_binary/1),
+         jason3_res <-
+           Enum.map(json3_list, fn x ->
+             {:ok, res} = Noun.Nounable.Jason.OrderedObject.from_noun(x)
+             res
+           end),
+         {:ok, tx} <-
+           CairoResource.Transaction.create_from_compliance_units(
+             jason1_res,
+             bin1_res,
+             jason2_res,
+             bin2_res,
+             jason3_res
+           ) do
+      {:ok, Noun.Nounable.to_noun(tx)}
+    else
+      _ -> :error
+    end
+  end
+
+  @spec cairo_prove_delta(Noun.t()) :: :error | {:ok, Noun.t()}
+  def cairo_prove_delta(core) do
+    with {:ok, sample} <- sample(core),
+         {:ok, cairo_tx} <- CairoResource.Transaction.from_noun(sample) do
+      {:ok, CairoResource.Transaction.prove_delta(cairo_tx)}
+    else
+      _ -> :error
+    end
+  end
 
   ############################################################
   #                   Arithmetic Helpers                     #
@@ -609,4 +1027,132 @@ defmodule Nock.Jets do
   defp compare(x, y) when x == y, do: 0
   defp compare(x, y) when x < y, do: -1
   defp compare(x, y) when x > y, do: 1
+
+  ############################################################
+  #                         Nock4K                           #
+  ############################################################
+
+  @spec nock4k(Noun.t(), Noun.t(), Nock.t()) :: {:ok, Noun.t()} | :error
+  defp nock4k(subject, formula, environment \\ %Nock{}) do
+    if environment.meter_pid != nil do
+      send(environment.meter_pid, {:gas, 1})
+    end
+
+    try do
+      case formula do
+        [formula_1 = [_ | _] | formula_2] ->
+          {:ok, result_1} = nock4k(subject, formula_1, environment)
+          {:ok, result_2} = nock4k(subject, formula_2, environment)
+          {:ok, [result_1 | result_2]}
+
+        [zero | axis] when zero in [0, <<>>, []] and is_integer(axis) ->
+          Noun.axis(axis, subject)
+
+        [zero | axis] when zero in [0, <<>>, []] and is_binary(axis) ->
+          Noun.axis(Noun.atom_binary_to_integer(axis), subject)
+
+        [zero | axis] when zero in [0, <<>>, []] and axis == [] ->
+          :error
+
+        [one | constant] when one in [1, <<1>>] ->
+          {:ok, constant}
+
+        [two, subject_formula | formula_formula] when two in [2, <<2>>] ->
+          {:ok, new_subject} = nock4k(subject, subject_formula, environment)
+          {:ok, new_formula} = nock4k(subject, formula_formula, environment)
+          nock4k(new_subject, new_formula, environment)
+
+        [three | sub_formula] when three in [3, <<3>>] ->
+          {:ok, sub_result} = nock4k(subject, sub_formula, environment)
+
+          if Noun.is_noun_cell(sub_result) do
+            {:ok, 0}
+          else
+            {:ok, 1}
+          end
+
+        [four | sub_formula] when four in [4, <<4>>] ->
+          {:ok, sub_result} = nock4k(subject, sub_formula, environment)
+
+          cond do
+            sub_result == [] ->
+              {:ok, 1}
+
+            is_integer(sub_result) ->
+              {:ok, sub_result + 1}
+
+            is_binary(sub_result) ->
+              {:ok, Noun.atom_binary_to_integer(sub_result) + 1}
+
+            true ->
+              :error
+          end
+
+        [five, formula_1 | formula_2] when five in [5, <<5>>] ->
+          {:ok, result_1} = nock4k(subject, formula_1, environment)
+          {:ok, result_2} = nock4k(subject, formula_2, environment)
+
+          if Noun.equal?(result_1, result_2) do
+            {:ok, 0}
+          else
+            {:ok, 1}
+          end
+
+        [six, cond | branches = [_true_branch | _false_branch]]
+        when six in [6, <<6>>] ->
+          {:ok, cond_plus_two} =
+            nock4k(subject, [4 | [4 | cond]], environment)
+
+          {:ok, crash_guard} =
+            nock4k([2 | 3], [0 | cond_plus_two], environment)
+
+          {:ok, branch_formula} =
+            nock4k(branches, [0 | crash_guard], environment)
+
+          nock4k(subject, branch_formula, environment)
+
+        [seven, subject_formula | sub_formula] when seven in [7, <<7>>] ->
+          {:ok, new_subject} = nock4k(subject, subject_formula, environment)
+          nock4k(new_subject, sub_formula, environment)
+
+        [eight, push_formula | sub_formula] when eight in [8, <<8>>] ->
+          {:ok, pushed_noun} = nock4k(subject, push_formula, environment)
+          new_subject = [pushed_noun | subject]
+          nock4k(new_subject, sub_formula, environment)
+
+        [nine, axis | sub_formula] when nine in [9, <<9>>] ->
+          {:ok, sub_result} = nock4k(subject, sub_formula, environment)
+          nock4k(sub_result, [2 | [[0 | 1] | [0 | axis]]], environment)
+
+        [ten, [axis | replacement_formula] | sub_formula]
+        when ten in [10, <<10>>] ->
+          {:ok, replacement} =
+            nock4k(subject, replacement_formula, environment)
+
+          {:ok, sub_result} = nock4k(subject, sub_formula, environment)
+
+          Noun.replace(
+            Noun.atom_binary_to_integer(axis),
+            replacement,
+            sub_result
+          )
+
+        [eleven, [hint_noun | hint_formula] | sub_formula]
+        when eleven in [11, <<11>>] ->
+          {:ok, hint_result} = nock4k(subject, hint_formula, environment)
+          Nock.process_hint(hint_noun, hint_result, environment)
+          {:ok, real_result} = nock4k(subject, sub_formula, environment)
+          nock4k([hint_result | real_result], [0 | 3], environment)
+
+        [eleven, hint_noun | sub_formula] when eleven in [11, <<11>>] ->
+          Nock.process_hint(hint_noun)
+          nock4k(subject, sub_formula, environment)
+
+        _ ->
+          :error
+      end
+    rescue
+      _ in MatchError -> :error
+    end
+  end
 end

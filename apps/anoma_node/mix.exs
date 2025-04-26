@@ -21,6 +21,9 @@ defmodule AnomaNode.MixProject do
   end
 
   # Run "mix help compile.app" to learn about applications.
+  # note: included_applications do *not* get started automatically
+  #       extra_applications do get started automatically
+  #       mnesia should *not* be started automatically
   def application do
     [
       mod: {Anoma.Node, []},
@@ -29,10 +32,11 @@ defmodule AnomaNode.MixProject do
         :debugger,
         :enacl,
         :logger,
-        :mnesia,
         :runtime_tools,
-        :tools
-      ]
+        :tools,
+        :ex_unit
+      ],
+      included_applications: [:mnesia]
     ]
   end
 
@@ -40,10 +44,8 @@ defmodule AnomaNode.MixProject do
   defp deps do
     [
       {:anoma_lib, in_umbrella: true},
-      {:event_broker, in_umbrella: true}
-      # {:dep_from_hexpm, "~> 0.3.0"},
-      # {:dep_from_git, git: "https://github.com/elixir-lang/my_dep.git", tag: "0.1.0"},
-      # {:sibling_app_in_umbrella, in_umbrella: true}
+      {:event_broker, in_umbrella: true},
+      {:anoma_protobuf, in_umbrella: true}
     ] ++ global_deps()
   end
 

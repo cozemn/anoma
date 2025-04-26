@@ -16,8 +16,12 @@ defmodule Anoma.MixProject do
       dialyzer: [
         plt_local_path: "plts/anoma.plt",
         plt_core_path: "plts/core.plt",
-        flags: ["-Wno_improper_lists"],
-        plt_add_apps: [:mix, :ex_unit]
+        flags: [
+          # Turn off the warning for improper lists, because we use
+          # bare cons frequently and deliberately.
+          "-Wno_improper_lists"
+        ],
+        plt_add_apps: [:mix, :ex_unit, :mnesia]
       ],
       # Docs
       name: "Anoma",
@@ -32,7 +36,7 @@ defmodule Anoma.MixProject do
         elixir_out: "apps/anoma_protobuf/lib/anoma/protobuf",
         proto_files: ["apps/anoma_protobuf/priv/protobuf"],
         extra_opts:
-          "one_file_per_module=true,gen_descriptors=true,plugins=grpc"
+          "one_file_per_module=true,gen_descriptors=true,plugins=grpc,include_docs=true"
       ]
     ]
   end
@@ -69,7 +73,9 @@ defmodule Anoma.MixProject do
       extra_section: "GUIDES",
       groups_for_extras: group_for_extras(),
       groups_for_modules: group_for_modules(),
-      before_closing_body_tag: &docs_before_closing_body_tag/1
+      before_closing_body_tag: &docs_before_closing_body_tag/1,
+      skip_undefined_reference_warnings_on:
+        &(not String.match?(&1, ~r/^Protobuf\.Wire.*/))
     ]
   end
 
@@ -125,12 +131,16 @@ defmodule Anoma.MixProject do
   end
 
   # Run "mix help compile.app" to learn about applications.
+  # note: included_applications do *not* get started automatically
+  #       extra_applications do get started automatically
+  #       mnesia should *not* be started automatically
   def application do
     [
       extra_applications: [
         :observer,
         :wx
-      ]
+      ],
+      included_applications: [:mnesia]
     ]
   end
 
